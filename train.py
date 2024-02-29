@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Train JEPA model')
-parser.add_argument('--run_name', type=str, default='default_run', help='Name of the training run')
+parser.add_argument('--tag', type=str, default='default_run', help='Name of the training run')
 parser.add_argument('--load_checkpoint', type=bool, default=False, help='Whether to load the model from a checkpoint')
 parser.add_argument('--checkpoint_file', type=str, default='', help='Path to the checkpoint file')
 args = parser.parse_args()
@@ -189,10 +189,9 @@ else:
     print("CUDA is not available. Training on CPU.")
 
 
-checkpoint_dir = f"checkpoints/{args.run_name}"
+checkpoint_dir = f"checkpoints/{args.tag}"
 os.makedirs(checkpoint_dir, exist_ok=True)
 
-# Load checkpoint by file name from command line args if exists and if load_checkpoint is True
 if args.load_checkpoint and args.checkpoint_file:
     checkpoint_path = os.path.join(checkpoint_dir, args.checkpoint_file)
     if os.path.exists(checkpoint_path):
@@ -200,7 +199,6 @@ if args.load_checkpoint and args.checkpoint_file:
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
-        # Manually set the scheduler's step to the correct epoch
         for _ in range(start_epoch * ipe):
             scheduler.step()
             next(momentum_scheduler)
@@ -208,11 +206,23 @@ if args.load_checkpoint and args.checkpoint_file:
 
 mixed_precision = False
 
+iterations_per_epoch = len(data_loader)
+loader = iter(data_loader)
+
 for epoch in range(start_epoch, num_epochs):
     model.train()
     total_loss = 0
-    for batch_idx, (X, masks_enc, masks_pred) in enumerate(data_loader):
-        X, masks_enc, masks_pred = load_clips(X, masks_enc, masks_pred, batch_size, num_clips, device)            
+    for batch_idx in range(iterations_per_epoch):
+        try:
+            batch = next(loader)
+            X, masks_enc, masks_pred = batch
+            X, masks_enc, masks_pred = load_clips(X, masks_enc, masks_pred, batch_size, num_clips, device)
+        except StopIteration:
+            logger.info(f"End of data loader reached at iteration {batch_idx}")
+            break
+        except Exception as e:
+            logger.error(f"Error loading batch {batch_idx}: {e}")
+            continue            
 
 
         with torch.cuda.amp.autocast(enabled=mixed_precision):
@@ -249,7 +259,7 @@ for epoch in range(start_epoch, num_epochs):
 
     scheduler.step()
 
-    avg_loss = total_loss / len(data_loader)
+    avg_loss = total_loss / iterations_per_epoch
     current_lr = scheduler.get_last_lr()[0]
 
     logger.info(f"Epoch: {epoch}, Average Loss: {avg_loss}, Current Learning Rate: {current_lr}")

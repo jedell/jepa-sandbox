@@ -20,6 +20,10 @@ class WarmupCosineSchedule(object):
         self.warmup_steps = warmup_steps
         self.T_max = T_max - warmup_steps
         self._step = 0.
+        self._last_lr = [start_lr]
+
+    def get_last_lr(self):
+        return self._last_lr
 
     def step(self):
         self._step += 1
@@ -35,4 +39,7 @@ class WarmupCosineSchedule(object):
         for group in self.optimizer.param_groups:
             group['lr'] = new_lr
 
+        self._last_lr.append(new_lr)
+
         return new_lr
+
