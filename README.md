@@ -1,14 +1,7 @@
+# JEPA Playground 🧪
 
-Pretrain:
-    python main.py --unsupervised --data_dir=</path/to/data> --save_dir=<path/to/save/model>
+## Things I'm Interested In
 
-
-Finetune:
-    python main.py --finetune  --data_dir=</path/to/data> --save_dir=<path/to/save/model>
-
-    --list_of_jepas: underscore dilineated list of the JEPA models with x number of frame skip to use in finetuning. ex: 0_5_10 for the 12th, 17th, and 22nd frame JEPAs
-
-
-
-
-# text-jepa
+- [Joint Embedding Predictive Architecture for Video Understanding](https://openreview.net/pdf?id=BZ5a1r-kVsf)
+- [Meta AI Blog: Introducing JEPA - Yann LeCun’s AI Model for Video Understanding](https://ai.meta.com/blog/v-jepa-yann-lecun-ai-model-video-joint-embedding-predictive-architecture/)
+- [VICReg: Variance-Invariance-Covariance Regularization for Self-Supervised Learning](https://github.com/facebookresearch/vicreg)
