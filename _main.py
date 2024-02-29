@@ -7,7 +7,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from dataset import FrameDataset
-from model._jepa import JEPA
+from jepa.models.jepa import JEPA
 from model.encoder import ViViT
 from torchvision import transforms
 import copy

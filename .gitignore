@@ -163,3 +163,6 @@ data
 data/
 
 .DS_Store
+
+checkpoints
+checkpoints/
