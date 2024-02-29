@@ -2,6 +2,7 @@
 # Use pretrained represenations for jepa to train diffusion model
 # latent space => diffusion model => pixel space
 # use /supervised
+# https://github.com/lucidrains/denoising-diffusion-pytorch 
 
 import torch
 from jepa.models.jepa import JEPA
@@ -20,8 +21,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = JEPA.load_pretrained('path/to/pretrained/model').to(device)
 model.eval()
 
-decoded_dir = 'decoded_images'
-os.makedirs(decoded_dir, exist_ok=True)
+reconstructed_dir = 'reconstructed_images'
+os.makedirs(reconstructed_dir, exist_ok=True)
 
 with torch.no_grad():
     for batch_idx, (frames, masks_enc, masks_pred) in enumerate(data_loader):
