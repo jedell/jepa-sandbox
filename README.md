@@ -1,4 +1,4 @@
-# JEPA Playground 🧪
+# JEPA Sandbox
 
 ## Things I'm Interested In
 
