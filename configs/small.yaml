@@ -1,6 +1,6 @@
 data:
   unlabel_dir: data/Dataset_Student/unlabeled
-  batch_size: 24
+  batch_size: 32
   patch_size: 16
   pin_mem: True
   num_workers: 4
@@ -26,6 +26,14 @@ optimizer:
   ema:
   - 0.998
   - 1.0
+
+meta:
+  load_checkpoint: false
+  read_checkpoint: null
+  seed: 234
+  eval_freq: 100
+  use_sdpa: true
+  dtype: bfloat16
 
 mask:
   - aspect_ratio:

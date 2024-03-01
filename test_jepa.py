@@ -5,7 +5,7 @@ from torch.autograd import Variable
 import copy
 
 from models.jepa import JEPA
-from utils import JEPAParams
+from utils.misc import JEPAParams
 
 
 def test_jepa():

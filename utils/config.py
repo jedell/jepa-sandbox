@@ -27,6 +27,17 @@ class ConfigLoader:
         with open(self.config_path, 'r') as file:
             configs = yaml.safe_load(file)
         return configs
+    
+    def get_meta_configs(self):
+        meta_configs = self.configs.get('meta', {})
+        return {
+            'load_checkpoint': meta_configs.get('load_checkpoint', False),
+            'read_checkpoint': meta_configs.get('read_checkpoint', None),
+            'seed': meta_configs.get('seed', 234),
+            'eval_freq': meta_configs.get('eval_freq', 100),
+            'use_sdpa': meta_configs.get('use_sdpa', True),
+            'dtype': meta_configs.get('dtype', 'bfloat16'),
+        }
 
     def get_data_configs(self):
         data_configs = self.configs.get('data', {})

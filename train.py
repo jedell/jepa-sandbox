@@ -1,39 +1,46 @@
 import torch
-import copy
 import os
-import logging
+import json
 import argparse
-from typing import Tuple
+import numpy as np
 from utils.config import ConfigLoader
-from utils.tensors import repeat_interleave_batch, trunc_normal_
+from utils.tensors import repeat_interleave_batch
 from dataset import init_udata
+from utils.misc import init_model, init_optimizer_and_scheduler, init_logger, save_checkpoint
+from utils.logs import log_loss_metrics, log_grad_metrics, init_metrics
 
-from models.jepa import JEPA
-from models.vit import vit_tiny, vit_small
-from models.predictor import vit_predictor
-from models.utils.multimask import MultiMaskWrapper, PredictorMultiMaskWrapper
-from utils.config import JEPAParams
-from utils.schedulers import WarmupCosineSchedule
-
-torch.manual_seed(42)
+GLOBAL_SEED = 42
+torch.manual_seed(GLOBAL_SEED)
+np.random.seed(GLOBAL_SEED)
 if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(42)
+    torch.cuda.manual_seed_all(GLOBAL_SEED)
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Parse command line arguments
 parser = argparse.ArgumentParser(description='Train JEPA model')
 parser.add_argument('--tag', type=str, default='default_run', help='Name of the training run')
 parser.add_argument('--load_checkpoint', type=bool, default=False, help='Whether to load the model from a checkpoint')
 parser.add_argument('--checkpoint_file', type=str, default='', help='Path to the checkpoint file')
 args = parser.parse_args()
 
+logger = init_logger(args.tag)
+
 config_loader = ConfigLoader('configs/small.yaml')
 mask_config = config_loader.get_mask_configs()
 data_config = config_loader.get_data_configs()
+meta_config = config_loader.get_meta_configs()
 
+_dtype = meta_config['dtype']
+
+if _dtype.lower() == 'bfloat16':
+        dtype = torch.bfloat16
+        mixed_precision = True
+elif _dtype.lower() == 'float16':
+    dtype = torch.float16
+    mixed_precision = True
+else:
+    dtype = torch.float32
+    mixed_precision = False
+
+# DATA
 data_loader, dataset = init_udata(data_config=data_config, mask_config=mask_config)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -55,101 +62,7 @@ def load_clips(udata, masks_enc, masks_pred, batch_size=16, num_clips=1, device=
 
     return (clips, _masks_enc, _masks_pred)
 
-def init_model(
-    model_config: dict,
-    device: torch.device
-) -> JEPA:
-    
-    encoder = vit_small(
-        image_size=data_config['collate']['crop_size'],
-        num_frames=data_config['collate']['num_frames'],
-        tubelet_size=data_config['collate']['tubelet_size'],
-        use_sdpa=False,
-        uniform_power=False,
-    )
-
-    encoder = MultiMaskWrapper(encoder)
-
-    predictor = vit_predictor(
-        image_size=data_config['collate']['crop_size'],
-        num_frames=data_config['collate']['num_frames'],
-        tubelet_size=data_config['collate']['tubelet_size'],
-        patch_size=data_config['patch_size'],
-        use_mask_tokens=False,
-        embed_dim=encoder.backbone.embed_dim,
-        predictor_embed_dim=384,
-        depth=6,
-        num_heads=encoder.backbone.num_heads,
-        num_mask_tokens=2,
-        zero_init_mask_tokens=True,
-        use_sdpa=False,
-        uniform_power=False,
-    )
-
-    predictor = PredictorMultiMaskWrapper(predictor)
-
-    def _init_weights(m: torch.nn.Module) -> None:
-        if isinstance(m, torch.nn.Linear):
-            trunc_normal_(m.weight, std=0.02)
-            if m.bias is not None:
-                torch.nn.init.constant_(m.bias, 0)
-        elif isinstance(m, torch.nn.LayerNorm):
-            torch.nn.init.constant_(m.bias, 0)
-            torch.nn.init.constant_(m.weight, 1.0)
-
-    for m in encoder.modules():
-        _init_weights(m)
-
-    for m in predictor.modules():
-        _init_weights(m)
-
-    hparams = JEPAParams()
-
-    target_encoder = copy.deepcopy(encoder)
-
-    model = JEPA(encoder, target_encoder, predictor, hparams, training=True)
-
-    model.to(device)
-
-    return model
-
-def init_optimizer_and_scheduler(
-    model: JEPA,
-    optimizer_config: dict,
-    scheduler_config: dict
-) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler._LRScheduler]:
-    
-    for p in model.target_encoder.parameters():
-        p.requires_grad = False
-
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=optimizer_config['lr'],
-        betas=(0.9, 0.999),
-        eps=1e-8,
-        weight_decay=scheduler_config['weight_decay']
-    )
-
-    warmup = scheduler_config['warmup']
-    iterations_per_epoch = scheduler_config['ipe']
-    start_lr = scheduler_config['start_lr']
-    ref_lr = scheduler_config['lr']
-    final_lr = scheduler_config['final_lr']
-    ipe_scale = scheduler_config['ipe_scale']
-    num_epochs = scheduler_config['epochs']
-    
-    scheduler = WarmupCosineSchedule(
-        optimizer,
-        warmup_steps=int(warmup * iterations_per_epoch),
-        start_lr=start_lr,
-        ref_lr=ref_lr,
-        final_lr=final_lr,
-        T_max=int(ipe_scale * num_epochs * iterations_per_epoch),
-    )
-
-    return optimizer, scheduler
-
-model = init_model({}, device)
+model = init_model({}, data_config, device)
 
 start_epoch = 0
 optimizer_config = config_loader.get_optimizer_configs()
@@ -159,9 +72,6 @@ ipe = optimizer_config['ipe']
 ipe_scale = optimizer_config['ipe_scale']
 num_epochs = optimizer_config['num_epochs']
 clip_grad = optimizer_config['clip_grad']
-
-momentum_scheduler = (ema[0] + i*(ema[1]-ema[0])/(ipe*num_epochs*ipe_scale)
-                          for i in range(int(ipe*num_epochs*ipe_scale)+1))
 
 scheduler_config = {
     'ipe': optimizer_config['ipe'],
@@ -176,9 +86,14 @@ scheduler_config = {
     'final_lr': optimizer_config['final_lr'],
 }
 
+ipe = len(data_loader)
+
 optimizer, scheduler = init_optimizer_and_scheduler(model, optimizer_config, scheduler_config)
 
-scaler = torch.cuda.amp.GradScaler()
+scaler = torch.cuda.amp.GradScaler() if mixed_precision else None
+
+momentum_scheduler = (ema[0] + i*(ema[1]-ema[0])/(ipe*num_epochs*ipe_scale)
+                          for i in range(int(ipe*num_epochs*ipe_scale)+1))
 
 if torch.cuda.is_available():
     print(f"Using GPU: {torch.cuda.get_device_name(torch.cuda.current_device())}")
@@ -203,17 +118,48 @@ if args.load_checkpoint and args.checkpoint_file:
             scheduler.step()
             next(momentum_scheduler)
         logger.info(f"Loaded checkpoint from {checkpoint_path} at epoch {start_epoch}")
-
-mixed_precision = False
-
-iterations_per_epoch = len(data_loader)
+        
 loader = iter(data_loader)
 
+class StatsLogger:
+    def __init__(self):
+        self.stats = {}
+
+    def log(self, key, value):
+        if key not in self.stats:
+            self.stats[key] = []
+        self.stats[key].append(value)
+
+    def get_stats(self, key):
+        return self.stats.get(key, [])
+
+    def save_stats(self, filepath):
+        with open(filepath, 'w') as f:
+            for key, values in self.stats.items():
+                f.write(f"{key}: {values}\n")
+
+    def load_stats(self, filepath):
+        self.stats = {}
+        with open(filepath, 'r') as f:
+            for line in f:
+                key, values_str = line.strip().split(': ')
+                values = eval(values_str)
+                self.stats[key] = values
+
+loss_metrics, grad_metrics = init_metrics()
+log_freq = 10
+
+logger.info(f"Start {args.tag} training")
+
+current_lr = optimizer_config['start_lr']
+warmup = optimizer_config['warmup']
+
 for epoch in range(start_epoch, num_epochs):
+    logger.info(f"Epoch {epoch}/{num_epochs}")
     model.train()
     total_loss = 0
     loader = iter(data_loader)
-    for batch_idx in range(iterations_per_epoch):
+    for batch_idx in range(ipe):
         try:
             batch = next(loader)
             X, masks_enc, masks_pred = batch
@@ -225,18 +171,19 @@ for epoch in range(start_epoch, num_epochs):
             logger.error(f"Error loading batch {batch_idx}: {e}")
             continue            
 
-
+        loss = 0.
         with torch.cuda.amp.autocast(enabled=mixed_precision):
             _, _, losses = model(X, masks_enc, masks_pred)
             loss = losses['loss']
 
+        _enc_norm, _pred_norm = 0., 0.
         if mixed_precision:
             scaler.scale(loss).backward()
-            scaler.step(optimizer)
+            scaler.unscale_(optimizer)
         else:
             loss.backward()
             
-        if clip_grad:
+        if (epoch > warmup) and clip_grad is not None:
             _enc_norm = torch.nn.utils.clip_grad_norm_(model.encoder.parameters(), clip_grad)
             _pred_norm = torch.nn.utils.clip_grad_norm_(model.predictor.parameters(), clip_grad)
 
@@ -255,25 +202,26 @@ for epoch in range(start_epoch, num_epochs):
 
         total_loss += loss.item()
 
-        if batch_idx % 10 == 0:
+        if batch_idx % log_freq == 0:
             logger.info(f"Epoch: {epoch}, Batch: {batch_idx}, Loss: {loss.item()}")
+            # grad metrics
+            logger.info(f"Grad Norms: Encoder: {_enc_norm}, Predictor: {_pred_norm}")
+            log_loss_metrics(loss_metrics, epoch, batch_idx, loss.item(), total_loss / (batch_idx + 1), current_lr)
+            log_grad_metrics(grad_metrics, epoch, batch_idx, _enc_norm, _pred_norm)
+            
 
-    scheduler.step()
-
-    avg_loss = total_loss / iterations_per_epoch
+    avg_loss = total_loss / ipe
     current_lr = scheduler.get_last_lr()[0]
 
     logger.info(f"Epoch: {epoch}, Average Loss: {avg_loss}, Current Learning Rate: {current_lr}")
 
-    # Save checkpoint
-    checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch_{epoch}.pth")
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'loss': avg_loss,
-    }, checkpoint_path)
-    logger.info(f"Saved checkpoint to {checkpoint_path}")
+    save_checkpoint(epoch, model, optimizer, avg_loss, checkpoint_dir)
+    logger.info(f"Saved checkpoint to {checkpoint_dir}")
+
+    metrics_path = os.path.join('logs', args.tag, "metrics.json")
+    with open(metrics_path, 'w') as f:
+        json.dump({'loss_metrics': loss_metrics, 'grad_metrics': grad_metrics}, f, indent=4)
 
 logger.info("Training completed.")
+
 

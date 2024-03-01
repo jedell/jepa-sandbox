@@ -13,7 +13,7 @@ from torchvision import transforms
 import copy
 import numpy as np
 import torchmetrics
-from utils import JEPAParams
+from utils.misc import JEPAParams
 
 def unsupervised_train(model, unlabel_loader, optimizer, criterion, scheduler, args, skip=0):
     model.train()
