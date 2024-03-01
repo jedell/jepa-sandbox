@@ -3,6 +3,7 @@
 # latent space => diffusion model => pixel space
 # use /supervised
 # https://github.com/lucidrains/denoising-diffusion-pytorch 
+# also test simple VAE https://github.com/AntixK/PyTorch-VAE/blob/master/models/vanilla_vae.py
 
 import torch
 from jepa.models.jepa import JEPA

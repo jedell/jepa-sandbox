@@ -9,7 +9,7 @@ from utils.tensors import repeat_interleave_batch, trunc_normal_
 from dataset import init_udata
 
 from models.jepa import JEPA
-from models.vit import vit_tiny
+from models.vit import vit_tiny, vit_small
 from models.predictor import vit_predictor
 from models.utils.multimask import MultiMaskWrapper, PredictorMultiMaskWrapper
 from utils.config import JEPAParams
@@ -60,7 +60,7 @@ def init_model(
     device: torch.device
 ) -> JEPA:
     
-    encoder = vit_tiny(
+    encoder = vit_small(
         image_size=data_config['collate']['crop_size'],
         num_frames=data_config['collate']['num_frames'],
         tubelet_size=data_config['collate']['tubelet_size'],
@@ -212,6 +212,7 @@ loader = iter(data_loader)
 for epoch in range(start_epoch, num_epochs):
     model.train()
     total_loss = 0
+    loader = iter(data_loader)
     for batch_idx in range(iterations_per_epoch):
         try:
             batch = next(loader)
@@ -270,7 +271,6 @@ for epoch in range(start_epoch, num_epochs):
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
-        'scheduler_state_dict': scheduler.state_dict(),  # Save scheduler state
         'loss': avg_loss,
     }, checkpoint_path)
     logger.info(f"Saved checkpoint to {checkpoint_path}")

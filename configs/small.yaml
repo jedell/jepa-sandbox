@@ -18,7 +18,7 @@ optimizer:
   clip_grad: 10.0
   weight_decay: 0.04
   final_weight_decay: 0.4
-  num_epochs: 300
+  num_epochs: 25
   warmup: 40
   start_lr: 0.0002
   lr: 0.000625
